@@ -43,6 +43,30 @@ default:
     - COBASE-Frank-Q 
     - COBASE-Gumbel-Q 
     
+  dmesvs_enscop_bm:
+    - EnsCopGCA
+    - EnsClayton
+    - EnsFrank
+    - EnsGumbel
+
+  dmesvs_enscop_models:
+    - COBASE-EnsCopGCA-Q
+    - COBASE-EnsClayton-Q
+    - COBASE-EnsFrank-Q
+    - COBASE-EnsGumbel-Q
+
+  dmesvs_ensvshist_bm:
+    - COBASE-CopGCA-Q
+    - COBASE-Clayton-Q
+    - COBASE-Frank-Q
+    - COBASE-Gumbel-Q
+
+  dmesvs_ensvshist_models:
+    - COBASE-EnsCopGCA-Q
+    - COBASE-EnsClayton-Q
+    - COBASE-EnsFrank-Q
+    - COBASE-EnsGumbel-Q
+
   crps_scores_models:
     - EMOS-R
     - EMOS-Q
@@ -65,6 +89,14 @@ default:
     - COBASE-Clayton-Q
     - COBASE-Frank-Q
     - COBASE-Gumbel-Q
+    - EnsCopGCA
+    - EnsClayton
+    - EnsFrank
+    - EnsGumbel
+    - COBASE-EnsCopGCA-Q
+    - COBASE-EnsClayton-Q
+    - COBASE-EnsFrank-Q
+    - COBASE-EnsGumbel-Q
   model_names_unshuffled:
     - CopGCA
     - Clayton

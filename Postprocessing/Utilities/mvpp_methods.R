@@ -66,6 +66,10 @@ mvpp <- function(method,
             "Clayton"         = mvpp_arch(method, n, m, d, obs_init, obs, postproc_out_init, postproc_out, EMOS_sample, trainingWindow, output_dim),
             "Frank"           = mvpp_arch(method, n, m, d, obs_init, obs, postproc_out_init, postproc_out, EMOS_sample, trainingWindow, output_dim),
             "Gumbel"          = mvpp_arch(method, n, m, d, obs_init, obs, postproc_out_init, postproc_out, EMOS_sample, trainingWindow, output_dim),
+            "EnsCopGCA"       = mvpp_ens_cop_gca(n, m, d, ensfc, postproc_out, EMOS_sample, output_dim),
+            "EnsClayton"      = mvpp_ens_arch("Clayton", n, m, d, ensfc, postproc_out, EMOS_sample, output_dim),
+            "EnsFrank"        = mvpp_ens_arch("Frank", n, m, d, ensfc, postproc_out, EMOS_sample, output_dim),
+            "EnsGumbel"       = mvpp_ens_arch("Gumbel", n, m, d, ensfc, postproc_out, EMOS_sample, output_dim),
         )
     } else {
         res <- mvpp_shuffle(n, m, d, EMOS_sample, MVPP_sample)
@@ -379,6 +383,77 @@ mvpp_latent_obs <- function(n, m, d, obs_init, obs, postproc_out_init, postproc_
     return(list("mvppout" = temp_env$mvppout, "chosenCopula" = temp_env$chosenCopula, "params" = temp_env$params))
 }
 
+mvpp_latent_ens <- function(n, m, d, ensfc, postproc_out, function_on_latent_ens, output_dim, workers = NULL) {
+    library(future)
+    library(future.apply)
+    library(progressr)
+
+    if (is.null(workers)) {
+        workers <- parallel::detectCores() - 2
+    }
+
+    if (parallelization) {
+        plan(multisession, workers = workers)
+    } else {
+        plan(sequential)
+    }
+    options(future.globals.maxSize = +Inf)
+    handlers(global = TRUE)
+    progressr::handlers("cli")
+
+    temp_env <- new.env()
+    temp_env$mvppout <- array(NA, dim = c(n, output_dim, d))
+    temp_env$chosenCopula <- array(NA, dim = n)
+    temp_env$params <- array(NA, dim = n)
+
+    with_progress({
+        p <- progressor(steps = n + 5)
+        results <- future_lapply(1:n, future.seed = TRUE, function(nn) {
+            p(sprintf("Day %d", nn))
+
+            pp_test <- postproc_out[nn, , ]
+
+            # Current day's ensemble members: shape [m, d]
+            ens_day <- ensfc[nn, , ]
+            if (is.null(dim(ens_day))) {
+                ens_day <- matrix(ens_day, nrow = m, ncol = d)
+            }
+
+            # Transform ensemble to latent Gaussian space
+            ens_latent <- (ens_day - matrix(pp_test[, 1], m, d, byrow = TRUE)) / matrix(pp_test[, 2], m, d, byrow = TRUE)
+            ens_CDF <- pnorm(ens_latent)
+
+            out <- function_on_latent_ens(
+                obs_latent_gaussian = ens_latent,
+                obs_train_CDF = ens_CDF,
+                mean_values = pp_test[, 1],
+                sd_values = pp_test[, 2],
+                pp_train = NULL,
+                pp_test = pp_test,
+                nn = nn
+            )
+
+            return(out)
+        })
+    })
+
+    for (nn in 1:n) {
+        temp_env$mvppout[nn, , ] <- results[[nn]]$mvppout
+        if (!is.null(results[[nn]]$chosenCopula)) {
+            temp_env$chosenCopula[nn] <- results[[nn]]$chosenCopula
+        }
+        if (!is.null(results[[nn]]$params)) {
+            temp_env$params[nn] <- results[[nn]]$params
+        }
+    }
+
+    if (parallelization) {
+        clean_futures()
+    }
+
+    return(list("mvppout" = temp_env$mvppout, "chosenCopula" = temp_env$chosenCopula, "params" = temp_env$params))
+}
+
 mvpp_shuffle <- function(n, m, d, EMOS_sample, MVPP_sample) {
     mvppout <- array(NA, dim = dim(EMOS_sample))
 
@@ -576,6 +651,128 @@ mvpp_arch <- function(method, n, m, d, obs_init, obs, postproc_out_init, postpro
     }
 
     return(mvpp_latent_obs(n, m, d, obs_init, obs, postproc_out_init, postproc_out, function_on_latent_obs, trainingWindow, output_dim, sim_matrix))
+}
+
+mvpp_ens_cop_gca <- function(n, m, d, ensfc, postproc_out, EMOS_sample, output_dim) {
+    require(MASS)
+
+    function_on_latent_ens <- function(obs_latent_gaussian, obs_train_CDF, mean_values, sd_values, pp_train, pp_test, nn) {
+        fitcop <- tryCatch(
+            {
+                fitCopula(normalCopula(dim = d, dispstr = "un"), data = obs_train_CDF, method = "itau")
+            },
+            error = function(e) {
+                print(e)
+                indepCopula(dim = d)
+            }
+        )
+
+        if (!(class(fitcop) == "indepCopula")) {
+            cop <- fitcop@copula
+        } else {
+            cop <- fitcop
+        }
+
+        paramMargins <- list()
+        for (i in 1:d) {
+            paramMargins[[i]] <- list(mean = mean_values[i], sd = sd_values[i])
+        }
+
+        mvDistribution <- mvdc(
+            copula = cop, margins = rep("norm", d),
+            paramMargins = paramMargins
+        )
+
+        mvsample <- rMvdc(output_dim, mvDistribution)
+
+        return(list(
+            mvppout = mvsample,
+            chosenCopula = NULL,
+            params = NULL
+        ))
+    }
+
+    res <- mvpp_latent_ens(n, m, d, ensfc, postproc_out, function_on_latent_ens, output_dim)
+    return(list("mvppout" = res$mvppout))
+}
+
+mvpp_ens_arch <- function(method, n, m, d, ensfc, postproc_out, EMOS_sample, output_dim) {
+    require(MASS)
+
+    function_on_latent_ens <- function(obs_latent_gaussian, obs_train_CDF, mean_values, sd_values, pp_train, pp_test, nn) {
+        fitMethod <- "itau"
+        maxIterations <- 5000
+
+        if (method == "Clayton") {
+            fitcop <- tryCatch(
+                {
+                    fitCopula(claytonCopula(dim = d), data = obs_train_CDF, method = fitMethod, optim.control = list(maxit = maxIterations))
+                },
+                error = function(e) {
+                    indepCopula(dim = d)
+                }
+            )
+        } else if (method == "Frank") {
+            fitcop <- tryCatch(
+                {
+                    fitCopula(frankCopula(dim = d), data = obs_train_CDF, method = fitMethod, optim.control = list(maxit = maxIterations))
+                },
+                error = function(e) {
+                    indepCopula(dim = d)
+                }
+            )
+        } else if (method == "Gumbel") {
+            fitcop <- tryCatch(
+                {
+                    fitCopula(gumbelCopula(dim = d), data = obs_train_CDF, method = fitMethod, optim.control = list(maxit = maxIterations))
+                },
+                error = function(e) {
+                    indepCopula(dim = d)
+                }
+            )
+        } else {
+            stop("Incorrect copula")
+        }
+
+        if (!(class(fitcop) == "indepCopula")) {
+            param <- fitcop@estimate
+            if ((method == "Clayton" && param < 0) ||
+                (method == "Frank" && param < 0) ||
+                (method == "Gumbel" && param < 1)) {
+                fitcop <- indepCopula(dim = d)
+            }
+        }
+
+        if (!(class(fitcop) == "indepCopula")) {
+            cop <- fitcop@copula
+            chosenCopula <- method
+            params <- fitcop@estimate
+        } else {
+            chosenCopula <- "indep"
+            cop <- fitcop
+            params <- NULL
+        }
+
+        paramMargins <- list()
+        for (i in 1:d) {
+            paramMargins[[i]] <- list(mean = mean_values[i], sd = sd_values[i])
+        }
+
+        mvDistribution <- mvdc(
+            copula = cop, margins = rep("norm", d),
+            paramMargins = paramMargins
+        )
+
+        mvsample <- rMvdc(output_dim, mvDistribution)
+
+        return(list(
+            mvppout = mvsample,
+            chosenCopula = chosenCopula,
+            params = params
+        ))
+    }
+
+    return(mvpp_latent_ens(n, m, d, ensfc, postproc_out, function_on_latent_ens, output_dim))
 }
 
 psurv_norm <- function(x, mean = 0, sd = 1) {

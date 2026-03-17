@@ -217,6 +217,48 @@ postprocess_all <- function(file_name, observation_columns, ensemble_regex, outp
         variant           = "Q"
     )
 
+    #####################################
+    ## Ensemble-based Copula Variants  ##
+    #####################################
+
+    ens.cop.gca <- mvpp_adjusted(method = "EnsCopGCA")
+    ens.clayton <- mvpp_adjusted(method = "EnsClayton")
+    ens.gumbel  <- mvpp_adjusted(method = "EnsGumbel")
+    ens.frank   <- mvpp_adjusted(method = "EnsFrank")
+
+    # COBASE shuffled variants (EMOS-Q shuffled by ensemble copula ranks)
+    ens.cop.gca.sh <- mvpp_adjusted(
+        method            = "EnsCopGCA",
+        EMOS_sample       = emos.q$mvppout,
+        shuffle           = TRUE,
+        MVPP_sample       = ens.cop.gca$mvppout,
+        variant           = "Q"
+    )
+
+    ens.clayton.sh <- mvpp_adjusted(
+        method            = "EnsClayton",
+        EMOS_sample       = emos.q$mvppout,
+        shuffle           = TRUE,
+        MVPP_sample       = ens.clayton$mvppout,
+        variant           = "Q"
+    )
+
+    ens.gumbel.sh <- mvpp_adjusted(
+        method            = "EnsGumbel",
+        EMOS_sample       = emos.q$mvppout,
+        shuffle           = TRUE,
+        MVPP_sample       = ens.gumbel$mvppout,
+        variant           = "Q"
+    )
+
+    ens.frank.sh <- mvpp_adjusted(
+        method            = "EnsFrank",
+        EMOS_sample       = emos.q$mvppout,
+        shuffle           = TRUE,
+        MVPP_sample       = ens.frank$mvppout,
+        variant           = "Q"
+    )
+
     #####################
     ## Save the scores ##
     #####################
@@ -240,7 +282,7 @@ postprocess_all <- function(file_name, observation_columns, ensemble_regex, outp
     ###########################
     #config$all_benchmarks 
     print("In Postprocessing/Utilities/mvpp.R: computing DM scores...")
-    benchmarks = c(config$dmcrps_bm, config$dmmvsimssh_bm, config$dmesvs_mvpp_bm, config$dmesvs_parcop_bm)
+    benchmarks = c(config$dmcrps_bm, config$dmmvsimssh_bm, config$dmesvs_mvpp_bm, config$dmesvs_parcop_bm, config$dmesvs_enscop_bm, config$dmesvs_ensvshist_bm)
     compute_DM_scores(file_name = savename, 
                       benchmarks = benchmarks, 
                       parallelization = FALSE)
