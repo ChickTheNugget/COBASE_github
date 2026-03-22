@@ -28,3 +28,10 @@ preprocess_all(
     observation_columns     = c("obs"),
     ensemble_regex          = c("^M_")
 )
+
+# KNMI data
+preprocess_all(
+    file_name               = "KNMI",
+    observation_columns     = c("T_DRYB_10", "T_DEWP_10"),
+    ensemble_regex          = c("^IFS_x2t_", "^IFS_x2d_")
+)
