@@ -1,6 +1,20 @@
 source(paste0(config$cobase_dir, "/Postprocessing/Utilities/scores_util.R"))
 library(copula)
 library(abind)
+library(R.utils)
+
+# Safe wrapper for fitCopula with timeout (prevents infinite loops in itau)
+safe_fitCopula <- function(copula, data, method = "itau", maxIterations = 5000, timeout_sec = 10) {
+    tryCatch(
+        withTimeout(
+            fitCopula(copula, data = data, method = method, optim.control = list(maxit = maxIterations)),
+            timeout = timeout_sec, onTimeout = "error"
+        ),
+        error = function(e) {
+            indepCopula(dim = copula@dimension)
+        }
+    )
+}
 
 
 mvpp <- function(method,
@@ -20,7 +34,7 @@ mvpp <- function(method,
                  parallelization = FALSE,
                  addTrainingDays = FALSE) {
     # Whether to use Parallelization
-    .GlobalEnv$parallelization <- parallelization
+    .GlobalEnv$parallelization <- TRUE
 
     method_name <- get_method_name(method, variant, shuffle)
 
@@ -296,28 +310,10 @@ clean_futures <- function(gc_repeats = 2, sleep_sec = 0.5, verbose = TRUE) {
 }
 
 mvpp_latent_obs <- function(n, m, d, obs_init, obs, postproc_out_init, postproc_out, function_on_latent_obs, trainingWindow, output_dim, sim_matrix = NULL, workers = NULL) {
-    library(future)
-    library(future.apply)
-    library(progressr)
 
-    if (is.null(workers)) {
-        workers <- parallel::detectCores() - 2
-    }
-
-    if (parallelization) {
-        plan(multisession, workers = workers)
-    } else {
-        plan(sequential)
-    }
-    options(future.globals.maxSize = +Inf)
-    handlers(global = TRUE)
-    progressr::handlers("cli")
-
-
-    temp_env <- new.env()
-    temp_env$mvppout <- array(NA, dim = c(n, output_dim, d))
-    temp_env$chosenCopula <- array(NA, dim = n)
-    temp_env$params <- array(NA, dim = n)
+    mvppout <- array(NA, dim = c(n, output_dim, d))
+    chosenCopula <- array(NA, dim = n)
+    params <- array(NA, dim = n)
 
     # concatenate obs_init and obs arrays to determine covariance matrix for Gaussian copulas
     obs_all <- rbind(obs_init, obs)
@@ -325,146 +321,98 @@ mvpp_latent_obs <- function(n, m, d, obs_init, obs, postproc_out_init, postproc_
     # Concatenate UVPP output for boostCopula
     pp_all <- abind(postproc_out_init, postproc_out, along = 1)
 
-    pct_step <- max(1, floor(n / 10))
-    with_progress({
-        p <- progressor(steps = n + 5) # +5 as buffer for late updates
-        # Do all computations in parallel
-        results <- future_lapply(1:n, future.seed = TRUE, function(nn) {
-            p(sprintf("Day %d", nn))
-            if (nn %% pct_step == 0 || nn == 1 || nn == n) {
-                cat(sprintf("  [mvpp_latent_obs] Day %d / %d (%.0f%%)\n", nn, n, 100 * nn / n))
-                flush.console()
-            }
+    set.seed(2025)
+    pct_step <- max(1, floor(n / 20))
 
-            # Retrieve the training IDs
-            if (is.null(sim_matrix)) { # Past `trainingWindow` days
-                train_IDs <- (dim(obs_init)[1] + nn - trainingWindow):(dim(obs_init)[1] + nn - 1)
-            } else { # Most similar `trainingWindow` days
-                t <- nn + dim(obs_init)[1]
-                sim_values <- sim_matrix[t, ]
-
-                # Retrieve the m most similar days
-                sorted_indices <- order(sim_values, decreasing = TRUE)
-                sorted_indices <- sorted_indices[sorted_indices > trainingWindow] # First `trainingWindow` values from pp_out are NA
-                train_IDs <- sorted_indices[1:output_dim]
-            }
-
-            # Only last measurements
-            obs_train <- obs_all[train_IDs, ]
-            pp_train <- pp_all[train_IDs, , ]
-            pp_test <- postproc_out[nn, , ]
-
-            # Latent Gaussian observations
-            obs_latent_gaussian <- (obs_train - pp_train[, , 1]) / pp_train[, , 2]
-            obs_train_CDF <- pnorm(obs_latent_gaussian)
-
-            out <- function_on_latent_obs(
-                obs_latent_gaussian = obs_latent_gaussian,
-                obs_train_CDF = obs_train_CDF,
-                mean_values = pp_test[, 1],
-                sd_values = pp_test[, 2],
-                pp_train = pp_train,
-                pp_test = pp_test,
-                nn = nn
-            )
-
-            return(out)
-        })
-    })
-
-    # Collect all results
     for (nn in 1:n) {
-        temp_env$mvppout[nn, , ] <- results[[nn]]$mvppout
-        if (!is.null(results[[nn]]$chosenCopula)) {
-            temp_env$chosenCopula[nn] <- results[[nn]]$chosenCopula
+        if (nn %% pct_step == 0 || nn == 1 || nn == n) {
+            cat(sprintf("  [latent_obs] Day %d / %d (%.0f%%)\n", nn, n, 100 * nn / n))
+            flush.console()
         }
-        if (!is.null(results[[nn]]$params)) {
-            temp_env$params[nn] <- results[[nn]]$params
+
+        # Retrieve the training IDs
+        if (is.null(sim_matrix)) { # Past `trainingWindow` days
+            train_IDs <- (dim(obs_init)[1] + nn - trainingWindow):(dim(obs_init)[1] + nn - 1)
+        } else { # Most similar `trainingWindow` days
+            t <- nn + dim(obs_init)[1]
+            sim_values <- sim_matrix[t, ]
+
+            # Retrieve the m most similar days
+            sorted_indices <- order(sim_values, decreasing = TRUE)
+            sorted_indices <- sorted_indices[sorted_indices > trainingWindow] # First `trainingWindow` values from pp_out are NA
+            train_IDs <- sorted_indices[1:output_dim]
         }
+
+        # Only last measurements
+        obs_train <- obs_all[train_IDs, ]
+        pp_train <- pp_all[train_IDs, , ]
+        pp_test <- postproc_out[nn, , ]
+
+        # Latent Gaussian observations
+        obs_latent_gaussian <- (obs_train - pp_train[, , 1]) / pp_train[, , 2]
+        obs_train_CDF <- pnorm(obs_latent_gaussian)
+
+        out <- function_on_latent_obs(
+            obs_latent_gaussian = obs_latent_gaussian,
+            obs_train_CDF = obs_train_CDF,
+            mean_values = pp_test[, 1],
+            sd_values = pp_test[, 2],
+            pp_train = pp_train,
+            pp_test = pp_test,
+            nn = nn
+        )
+
+        mvppout[nn, , ] <- out$mvppout
+        if (!is.null(out$chosenCopula)) chosenCopula[nn] <- out$chosenCopula
+        if (!is.null(out$params)) params[nn] <- out$params
     }
 
-    if (parallelization) {
-        # Clean up resources
-        clean_futures()
-    }
-
-    return(list("mvppout" = temp_env$mvppout, "chosenCopula" = temp_env$chosenCopula, "params" = temp_env$params))
+    return(list("mvppout" = mvppout, "chosenCopula" = chosenCopula, "params" = params))
 }
 
 mvpp_latent_ens <- function(n, m, d, ensfc, postproc_out, function_on_latent_ens, output_dim, workers = NULL) {
-    library(future)
-    library(future.apply)
-    library(progressr)
 
-    if (is.null(workers)) {
-        workers <- parallel::detectCores() - 2
-    }
+    mvppout <- array(NA, dim = c(n, output_dim, d))
+    chosenCopula <- array(NA, dim = n)
+    params <- array(NA, dim = n)
 
-    if (parallelization) {
-        plan(multisession, workers = workers)
-    } else {
-        plan(sequential)
-    }
-    options(future.globals.maxSize = +Inf)
-    handlers(global = TRUE)
-    progressr::handlers("cli")
-
-    temp_env <- new.env()
-    temp_env$mvppout <- array(NA, dim = c(n, output_dim, d))
-    temp_env$chosenCopula <- array(NA, dim = n)
-    temp_env$params <- array(NA, dim = n)
-
-    pct_step <- max(1, floor(n / 10))
-    with_progress({
-        p <- progressor(steps = n + 5)
-        results <- future_lapply(1:n, future.seed = TRUE, function(nn) {
-            p(sprintf("Day %d", nn))
-            if (nn %% pct_step == 0 || nn == 1 || nn == n) {
-                cat(sprintf("  [mvpp_latent_ens] Day %d / %d (%.0f%%)\n", nn, n, 100 * nn / n))
-                flush.console()
-            }
-
-            pp_test <- postproc_out[nn, , ]
-
-            # Current day's ensemble members: shape [m, d]
-            ens_day <- ensfc[nn, , ]
-            if (is.null(dim(ens_day))) {
-                ens_day <- matrix(ens_day, nrow = m, ncol = d)
-            }
-
-            # Transform ensemble to latent Gaussian space
-            ens_latent <- (ens_day - matrix(pp_test[, 1], m, d, byrow = TRUE)) / matrix(pp_test[, 2], m, d, byrow = TRUE)
-            ens_CDF <- pnorm(ens_latent)
-
-            out <- function_on_latent_ens(
-                obs_latent_gaussian = ens_latent,
-                obs_train_CDF = ens_CDF,
-                mean_values = pp_test[, 1],
-                sd_values = pp_test[, 2],
-                pp_train = NULL,
-                pp_test = pp_test,
-                nn = nn
-            )
-
-            return(out)
-        })
-    })
+    set.seed(2025)
+    pct_step <- max(1, floor(n / 20))
 
     for (nn in 1:n) {
-        temp_env$mvppout[nn, , ] <- results[[nn]]$mvppout
-        if (!is.null(results[[nn]]$chosenCopula)) {
-            temp_env$chosenCopula[nn] <- results[[nn]]$chosenCopula
+        if (nn %% pct_step == 0 || nn == 1 || nn == n) {
+            cat(sprintf("  [latent_ens] Day %d / %d (%.0f%%)\n", nn, n, 100 * nn / n))
+            flush.console()
         }
-        if (!is.null(results[[nn]]$params)) {
-            temp_env$params[nn] <- results[[nn]]$params
+
+        pp_test <- postproc_out[nn, , ]
+
+        # Current day's ensemble members: shape [m, d]
+        ens_day <- ensfc[nn, , ]
+        if (is.null(dim(ens_day))) {
+            ens_day <- matrix(ens_day, nrow = m, ncol = d)
         }
+
+        # Transform ensemble to latent Gaussian space
+        ens_latent <- (ens_day - matrix(pp_test[, 1], m, d, byrow = TRUE)) / matrix(pp_test[, 2], m, d, byrow = TRUE)
+        ens_CDF <- pnorm(ens_latent)
+
+        out <- function_on_latent_ens(
+            obs_latent_gaussian = ens_latent,
+            obs_train_CDF = ens_CDF,
+            mean_values = pp_test[, 1],
+            sd_values = pp_test[, 2],
+            pp_train = NULL,
+            pp_test = pp_test,
+            nn = nn
+        )
+
+        mvppout[nn, , ] <- out$mvppout
+        if (!is.null(out$chosenCopula)) chosenCopula[nn] <- out$chosenCopula
+        if (!is.null(out$params)) params[nn] <- out$params
     }
 
-    if (parallelization) {
-        clean_futures()
-    }
-
-    return(list("mvppout" = temp_env$mvppout, "chosenCopula" = temp_env$chosenCopula, "params" = temp_env$params))
+    return(list("mvppout" = mvppout, "chosenCopula" = chosenCopula, "params" = params))
 }
 
 mvpp_shuffle <- function(n, m, d, EMOS_sample, MVPP_sample) {
@@ -544,12 +492,12 @@ mvpp_cop_gca <- function(n, m, d, obs_init, obs, postproc_out_init, postproc_out
             paramMargins = paramMargins
         )
 
-        mvsample <- rMvdc(output_dim, mvDistribution)
-
-        # for (dd in 1:d)
-        # {
-        #   temp_env$mvppout[nn, , dd] <- mvsample[, dd]
-        # }
+        mvsample <- tryCatch(
+            rMvdc(output_dim, mvDistribution),
+            error = function(e) {
+                sapply(1:d, function(i) rnorm(output_dim, mean = mean_values[i], sd = sd_values[i]))
+            }
+        )
 
         return(list(
             mvppout = mvsample,
@@ -571,55 +519,21 @@ mvpp_arch <- function(method, n, m, d, obs_init, obs, postproc_out_init, postpro
     }
 
     function_on_latent_obs <- function(obs_latent_gaussian, obs_train_CDF, mean_values, sd_values, pp_train, pp_test, nn) {
-        # cat("Day ", nn, "\n")
-
-        fitMethod <- "itau" # "itau"
-        maxIterations <- 5000
-        # Estimate the parameter and copula - itau method does not converge for some cases (without giving a warning/ error and runs indefinitely)
-        # Copula parameters are bounded to prevent generating inf samples
-        if (method == "Clayton") {
-            fitcop <- tryCatch(
-                {
-                    fitCopula(claytonCopula(dim = d), data = obs_train_CDF, method = fitMethod, optim.control = list(maxit = maxIterations))
-                },
-                error = function(e) {
-                    # print(e)
-                    indepCopula(dim = d)
-                }
-            )
-        } else if (method == "Frank") {
-            fitcop <- tryCatch(
-                {
-                    fitCopula(frankCopula(dim = d), data = obs_train_CDF, method = fitMethod, optim.control = list(maxit = maxIterations))
-                },
-                error = function(e) {
-                    # print(e)
-                    indepCopula(dim = d)
-                }
-            )
-        } else if (method == "Gumbel") {
-            fitcop <- tryCatch(
-                {
-                    fitCopula(gumbelCopula(dim = d), data = obs_train_CDF, method = fitMethod, optim.control = list(maxit = maxIterations))
-                },
-                error = function(e) {
-                    # print(e)
-                    indepCopula(dim = d)
-                }
-            )
-        } else {
+        cop_obj <- switch(method,
+            "Clayton" = claytonCopula(dim = d),
+            "Frank"   = frankCopula(dim = d),
+            "Gumbel"  = gumbelCopula(dim = d),
             stop("Incorrect copula")
-        }
+        )
 
-
+        fitcop <- safe_fitCopula(cop_obj, data = obs_train_CDF)
 
         # Check if valid parameters have been generated
         if (!(class(fitcop) == "indepCopula")) {
             param <- fitcop@estimate
-
-            if ((method == "Clayton" && param < 0) ||
-                (method == "Frank" && param < 0) ||
-                (method == "Gumbel" && param < 1) ) {
+            if ((method == "Clayton" && (param < 0 || param > 100)) ||
+                (method == "Frank" && (param < 0 || param > 50)) ||
+                (method == "Gumbel" && (param < 1 || param > 50))) {
                 fitcop <- indepCopula(dim = d)
             }
         }
@@ -653,7 +567,12 @@ mvpp_arch <- function(method, n, m, d, obs_init, obs, postproc_out_init, postpro
             )
         
 
-        mvsample <- rMvdc(output_dim, mvDistribution)
+        mvsample <- tryCatch(
+            rMvdc(output_dim, mvDistribution),
+            error = function(e) {
+                sapply(1:d, function(i) rnorm(output_dim, mean = mean_values[i], sd = sd_values[i]))
+            }
+        )
 
 
         return(list(
@@ -696,7 +615,12 @@ mvpp_ens_cop_gca <- function(n, m, d, ensfc, postproc_out, EMOS_sample, output_d
             paramMargins = paramMargins
         )
 
-        mvsample <- rMvdc(output_dim, mvDistribution)
+        mvsample <- tryCatch(
+            rMvdc(output_dim, mvDistribution),
+            error = function(e) {
+                sapply(1:d, function(i) rnorm(output_dim, mean = mean_values[i], sd = sd_values[i]))
+            }
+        )
 
         return(list(
             mvppout = mvsample,
@@ -713,45 +637,20 @@ mvpp_ens_arch <- function(method, n, m, d, ensfc, postproc_out, EMOS_sample, out
     require(MASS)
 
     function_on_latent_ens <- function(obs_latent_gaussian, obs_train_CDF, mean_values, sd_values, pp_train, pp_test, nn) {
-        fitMethod <- "itau"
-        maxIterations <- 5000
-
-        if (method == "Clayton") {
-            fitcop <- tryCatch(
-                {
-                    fitCopula(claytonCopula(dim = d), data = obs_train_CDF, method = fitMethod, optim.control = list(maxit = maxIterations))
-                },
-                error = function(e) {
-                    indepCopula(dim = d)
-                }
-            )
-        } else if (method == "Frank") {
-            fitcop <- tryCatch(
-                {
-                    fitCopula(frankCopula(dim = d), data = obs_train_CDF, method = fitMethod, optim.control = list(maxit = maxIterations))
-                },
-                error = function(e) {
-                    indepCopula(dim = d)
-                }
-            )
-        } else if (method == "Gumbel") {
-            fitcop <- tryCatch(
-                {
-                    fitCopula(gumbelCopula(dim = d), data = obs_train_CDF, method = fitMethod, optim.control = list(maxit = maxIterations))
-                },
-                error = function(e) {
-                    indepCopula(dim = d)
-                }
-            )
-        } else {
+        cop_obj <- switch(method,
+            "Clayton" = claytonCopula(dim = d),
+            "Frank"   = frankCopula(dim = d),
+            "Gumbel"  = gumbelCopula(dim = d),
             stop("Incorrect copula")
-        }
+        )
+
+        fitcop <- safe_fitCopula(cop_obj, data = obs_train_CDF)
 
         if (!(class(fitcop) == "indepCopula")) {
             param <- fitcop@estimate
-            if ((method == "Clayton" && param < 0) ||
-                (method == "Frank" && param < 0) ||
-                (method == "Gumbel" && param < 1)) {
+            if ((method == "Clayton" && (param < 0 || param > 100)) ||
+                (method == "Frank" && (param < 0 || param > 50)) ||
+                (method == "Gumbel" && (param < 1 || param > 50))) {
                 fitcop <- indepCopula(dim = d)
             }
         }
@@ -766,23 +665,18 @@ mvpp_ens_arch <- function(method, n, m, d, ensfc, postproc_out, EMOS_sample, out
             params <- NULL
         }
 
-        paramMargins <- list()
-        for (i in 1:d) {
-            paramMargins[[i]] <- list(mean = mean_values[i], sd = sd_values[i])
-        }
+        paramMargins <- lapply(1:d, function(i) list(mean = mean_values[i], sd = sd_values[i]))
 
-        mvDistribution <- mvdc(
-            copula = cop, margins = rep("norm", d),
-            paramMargins = paramMargins
+        mvDistribution <- mvdc(copula = cop, margins = rep("norm", d), paramMargins = paramMargins)
+
+        mvsample <- tryCatch(
+            rMvdc(output_dim, mvDistribution),
+            error = function(e) {
+                sapply(1:d, function(i) rnorm(output_dim, mean = mean_values[i], sd = sd_values[i]))
+            }
         )
 
-        mvsample <- rMvdc(output_dim, mvDistribution)
-
-        return(list(
-            mvppout = mvsample,
-            chosenCopula = chosenCopula,
-            params = params
-        ))
+        return(list(mvppout = mvsample, chosenCopula = chosenCopula, params = params))
     }
 
     return(mvpp_latent_ens(n, m, d, ensfc, postproc_out, function_on_latent_ens, output_dim))

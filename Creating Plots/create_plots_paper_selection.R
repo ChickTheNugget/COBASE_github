@@ -517,6 +517,67 @@ dev.off()
 
 
 ########################################
+########## dmesvs_ecc (Figure 7):
+########################################
+# Methods vs ECC as benchmark
+if (!is.null(config$dmesvs_ecc_bm)) {
+print(paste0("working on: dmesvs_ecc"))
+
+dmesvs_ecc_model_names     = c(config$dmesvs_ecc_models)
+dmesvs_ecc_benchmark_name  = config$dmesvs_ecc_bm
+dmesvs_ecc_scores_list = c("es_list", "vs1_list")
+
+# loop over groups
+dmesvs_ecc_scores = lapply(seq_along(all_groups_info$group_names), function(gn){
+  print(paste0("gn == ", gn))
+  file_name  <- paste0(all_groups_info$group_names[gn], "_mout_", all_groups_info$output_dim_standard[gn])
+
+  dmesvs_ecc_scores_tmp = list()
+  for(sc in seq_along(dmesvs_ecc_scores_list)){
+    keep_scores = dmesvs_ecc_scores_list[sc]
+
+    data_env <- load_and_prepare_data(file_name, dmesvs_ecc_benchmark_name)
+    df <- data_env$df
+    dfplot <- filter_models(df, dmesvs_ecc_model_names, keep_scores)$df %>% subset(score %in% keep_scores)
+    dfplot <- dfplot %>%
+      pivot_longer(cols = starts_with("bootstrap_"), names_to = "bootstrap", values_to = "value") %>%
+      mutate(group_name = file_name,
+             group_names_pretty = all_groups_info$group_names_pretty[gn],
+             score = ifelse(dmesvs_ecc_scores_list[sc] == "es_list", "Energy Score", "Variogram Score"))
+    new_model_tmp = unlist(lapply(as.character(dfplot$model), change_names))
+    dfplot$model = new_model_tmp
+    new_bm_tmp = unlist(lapply(as.character(dfplot$benchmark), change_names))
+    dfplot$benchmark = new_bm_tmp
+
+    dmesvs_ecc_scores_tmp[[sc]] = dfplot
+  }
+  return(bind_rows(dmesvs_ecc_scores_tmp))
+}) %>% bind_rows()
+
+dmesvs_ecc_scores$group_names_pretty = factor(gsub("_mout_[0-9][0-9]", "", dmesvs_ecc_scores$group_names_pretty), levels = all_groups_info$group_names_pretty)
+dmesvs_ecc_scores$model = factor(dmesvs_ecc_scores$model, levels = unlist(lapply(dmesvs_ecc_model_names, change_names)))
+
+pdf(file = paste0(config$cobase_dir, config$results_folder, "Figures/flos_dmesvs_ecc", file_suffix, ".pdf"), width = 12, height = 8)
+print(
+ggplot(dmesvs_ecc_scores, aes(model, value)) +
+  facet_wrap(~score+group_names_pretty, nrow = 2) +
+  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = qnorm(alpha), ymax = qnorm(1 - alpha)),
+            fill = "gray75", color = "gray75", alpha = alpha) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6, width = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray25") +
+  theme_bw() +
+  xlab("Method") + ylab("DM test statistic") +
+  ggtitle(label = "Methods vs ECC") +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12),
+        text=element_text(size=16),
+        plot.margin = margin(t = 10, r = 33, b = 10, l = 45))
+)
+dev.off()
+} # end if dmesvs_ecc_bm
+
+
+########################################
 ########################################
 ########## crps table (Table B.3):
 ########################################

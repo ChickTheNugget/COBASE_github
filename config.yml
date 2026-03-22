@@ -21,14 +21,27 @@ default:
   dmesvs_mvpp_bm:
     - CopGCA
     - COBASE-CopGCA-Q
+    - ECC-Q
 
-  #dm_mvscores_main_models: 
+  #dm_mvscores_main_models:
   dmesvs_mvpp_models:
     - SimSchaake-Q
     - SSh-I14-Q
     - ECC-Q
-    - COBASE-CopGCA-Q 
+    - COBASE-CopGCA-Q
     - CopGCA
+
+  # ECC as benchmark: compare COBASE and member-based methods vs ECC
+  dmesvs_ecc_bm:
+    - ECC-Q
+  dmesvs_ecc_models:
+    - SimSchaake-Q
+    - SSh-I14-Q
+    - CopGCA
+    - COBASE-CopGCA-Q
+    - COBASE-Clayton-Q
+    - COBASE-Frank-Q
+    - COBASE-Gumbel-Q
 
   
   dmesvs_parcop_bm:
