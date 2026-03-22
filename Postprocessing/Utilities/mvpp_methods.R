@@ -27,7 +27,8 @@ mvpp <- function(method,
     if (addTrainingDays) {
         method_name <- paste0(method_name, "-", trainingWindow)
     }
-    cat("In Postprocessing/Utilities/mvpp_methods.R: Starting ", method_name, "...\n")
+    cat(sprintf("[%s] Starting %s ...\n", format(Sys.time(), "%H:%M:%S"), method_name))
+    flush.console()
 
     # Time function duration
     start_time <- Sys.time()
@@ -79,7 +80,9 @@ mvpp <- function(method,
 
     if (saveScores) {
         add_scores(score.env, res, method_name, start_time)
-        cat("In Postprocessing/Utilities/mvpp_methods.R: Saving ", method_name, "...\n")
+        elapsed <- round(as.numeric(difftime(Sys.time(), start_time, units = "secs")), 1)
+        cat(sprintf("[%s] Done %s (%.1f sec)\n", format(Sys.time(), "%H:%M:%S"), method_name, elapsed))
+        flush.console()
     }
 
 
@@ -322,11 +325,16 @@ mvpp_latent_obs <- function(n, m, d, obs_init, obs, postproc_out_init, postproc_
     # Concatenate UVPP output for boostCopula
     pp_all <- abind(postproc_out_init, postproc_out, along = 1)
 
+    pct_step <- max(1, floor(n / 10))
     with_progress({
         p <- progressor(steps = n + 5) # +5 as buffer for late updates
         # Do all computations in parallel
         results <- future_lapply(1:n, future.seed = TRUE, function(nn) {
             p(sprintf("Day %d", nn))
+            if (nn %% pct_step == 0 || nn == 1 || nn == n) {
+                cat(sprintf("  [mvpp_latent_obs] Day %d / %d (%.0f%%)\n", nn, n, 100 * nn / n))
+                flush.console()
+            }
 
             # Retrieve the training IDs
             if (is.null(sim_matrix)) { # Past `trainingWindow` days
@@ -406,10 +414,15 @@ mvpp_latent_ens <- function(n, m, d, ensfc, postproc_out, function_on_latent_ens
     temp_env$chosenCopula <- array(NA, dim = n)
     temp_env$params <- array(NA, dim = n)
 
+    pct_step <- max(1, floor(n / 10))
     with_progress({
         p <- progressor(steps = n + 5)
         results <- future_lapply(1:n, future.seed = TRUE, function(nn) {
             p(sprintf("Day %d", nn))
+            if (nn %% pct_step == 0 || nn == 1 || nn == n) {
+                cat(sprintf("  [mvpp_latent_ens] Day %d / %d (%.0f%%)\n", nn, n, 100 * nn / n))
+                flush.console()
+            }
 
             pp_test <- postproc_out[nn, , ]
 

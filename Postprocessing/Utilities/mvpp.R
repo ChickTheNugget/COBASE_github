@@ -87,7 +87,9 @@ postprocess_all <- function(file_name, observation_columns, ensemble_regex, outp
     ##################
     ## EMOS for ECC ##
     ##################
-    print("In Prosprocessing/Utilities/mvpp.R: doing the post-processing...")
+    cat(sprintf("\n========================================\n"))
+    cat(sprintf("Post-processing: %s (d=%d, n=%d, m=%d, output_dim=%d)\n", file_name, d, nout, m, output_dim_standard))
+    cat(sprintf("========================================\n"))
 
     emos.q <- mvpp_adjusted(
         method            = "EMOS",
