@@ -43,7 +43,31 @@ default:
     - COBASE-Frank-Q
     - COBASE-Gumbel-Q
 
-  
+  # ECC as benchmark vs ensemble-based COBASE methods
+  dmesvs_ecc_ens_bm:
+    - ECC-Q
+  dmesvs_ecc_ens_models:
+    - COBASE-EnsCopGCA-Q
+    - COBASE-EnsClayton-Q
+    - COBASE-EnsFrank-Q
+    - COBASE-EnsGumbel-Q
+
+  # Combined: all COBASE and member-based methods vs ECC
+  dmesvs_ecc_combined_bm:
+    - ECC-Q
+  dmesvs_ecc_combined_models:
+    - SimSchaake-Q
+    - SSh-I14-Q
+    - CopGCA
+    - COBASE-CopGCA-Q
+    - COBASE-Clayton-Q
+    - COBASE-Frank-Q
+    - COBASE-Gumbel-Q
+    - COBASE-EnsCopGCA-Q
+    - COBASE-EnsClayton-Q
+    - COBASE-EnsFrank-Q
+    - COBASE-EnsGumbel-Q
+
   dmesvs_parcop_bm:
     - CopGCA
     - Clayton

@@ -1,743 +1,306 @@
-source(paste0(config$cobase_dir, "/Creating Plots/Utilities/dm_plots.R")) # defines the function: load_and_prepare_data
-source(paste0(config$cobase_dir, "/Postprocessing/Utilities/load_data_util.R")) # defines the function: load_score_env
+source(paste0(config$cobase_dir, "/Creating Plots/Utilities/dm_plots.R"))
+source(paste0(config$cobase_dir, "/Postprocessing/Utilities/load_data_util.R"))
 
 library(xtable)
 
 
-########################################
-# load functions
-########################################
-change_names <- function(model_name) {
-  pretty_name <- switch(model_name,
-                        "ens"           = "Raw Ensemble",
-                        "CopGCA"        = "GCA",
-                        "SimSchaake-Q" = "SimSSh",
-                        "SimSchaake-R" = "SimSSh-R",
-                        "ECC-Q" = "ECC",
-                        "SSh-I14-Q" = "SSh",
-                        "COBASE-CopGCA-Q" = "COBASE-GCA",
-                        "COBASE-Clayton-Q" = "COBASE-Clayton",
-                        "COBASE-Frank-Q" = "COBASE-Frank",
-                        "COBASE-Gumbel-Q" = "COBASE-Gumbel",
-                        "EnsCopGCA"             = "EnsGCA",
-                        "EnsClayton"            = "EnsClayton",
-                        "EnsFrank"              = "EnsFrank",
-                        "EnsGumbel"             = "EnsGumbel",
-                        "COBASE-EnsCopGCA-Q"    = "COBASE-EnsGCA",
-                        "COBASE-EnsClayton-Q"   = "COBASE-EnsClayton",
-                        "COBASE-EnsFrank-Q"     = "COBASE-EnsFrank",
-                        "COBASE-EnsGumbel-Q"    = "COBASE-EnsGumbel",
-
-                        model_name # Not found
-  )
-
-  return(pretty_name)
+fig_path <- function(name, suffix) {
+    paste0(config$cobase_dir, config$results_folder,
+           "Figures/", name, suffix, ".pdf")
 }
 
-########################################
-# Main function: create all results for a given dataset
-########################################
-create_all_results <- function(dataset_name, station_info, all_groups_info) {
-
-# alpha for plotting
-alpha <- 0.25
-
-# suffix for output files
-file_suffix <- paste0("_", dataset_name)
-
-#
-########################################
-########## dmcrps_t2m: (Figure 1)
-########################################
-# CRPS EMOS-R v EMOS-Q
-print(paste0("working on: dmcrps_t2m"))
-dmcrps_benchmark_name  = config$dmcrps_bm
-dmcrps_model_names     = c(config$dmcrps_models)
-
-# loop over groups:
-dmcrps_scores = lapply(seq_along(all_groups_info$group_names), function(gn){
-  print(paste0("gn == ", gn))
-  # get group name:
-  file_name  <- paste0(all_groups_info$group_names[gn], "_mout_", all_groups_info$output_dim_standard[gn])
-
-
-  # load scores:
-  res <- new.env()
-  load_score_env(file_name, res)
-
-  # get the names of the scores that we want to keep:
-  crps_scores <- paste0("crps_", as.vector(outer(res$observation_columns, res$stations, paste, sep = "-")))
-
-  # load the actual data with the bootstrap samples of all the scores:
-  data_env <- load_and_prepare_data(file_name, dmcrps_benchmark_name)
-  df <- data_env$df
-  # filter by the scores that we want to keep:
-  dfplot <- filter_models(df, dmcrps_model_names, crps_scores)$df %>% subset(score %in% crps_scores)
-  # reformat for plotting:
-  dfplot <- dfplot %>%
-    # pivot
-    pivot_longer(cols = starts_with("bootstrap_"), names_to = "bootstrap", values_to = "value") %>%
-    # assign a station number from score name, and rename label the score to crps
-    mutate(station = gsub("crps_", "", score), score = "crps") %>%
-    # separate the variable and the station number
-    separate(station, into = c("var", "station"), sep = "-") %>%
-    #recode the variable for plotting
-    mutate(var = ifelse(var %in% c("obs", "T_DRYB_10"), "T2m", "DPT"))
-
-  dfplot$group = all_groups_info$group_names[gn]
-  return(dfplot)
-  }) %>% bind_rows()
-
-
-# join with the pretty station info
-dmcrps_scores <- dmcrps_scores %>%
-  left_join(station_info, by = c("station" = "st_num"))
-
-# put the stations in order
-dmcrps_scores$st_name = factor(dmcrps_scores$st_name, levels = station_info$st_name)
-
-
-pdf(file = paste0(config$cobase_dir, config$results_folder, "Figures/flos_dmcrps_t2m", file_suffix, ".pdf"), width = 12, height = 6)
-print(
-ggplot(dmcrps_scores %>% filter(var == "T2m"), aes(st_name, value)) +
-  facet_wrap(~var) +
-  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = qnorm(alpha), ymax = qnorm(1 - alpha)),
-            fill = "gray75", color = "gray75", alpha = alpha) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.6, width = 0.7) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray25") +
-  theme_bw() +
-  xlab("Station") + ylab("DM test statistic") +
-  ggtitle(label = "CRPS: EMOS v EMOS-R") +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 12),
-        axis.text.y = element_text(size = 12),
-        text=element_text(size=16),
-        plot.margin = margin(t = 10, r = 33, b = 10, l = 45))
-)
-dev.off()
-
-########################################
-########## dmmvsimssh: (Figure 2)
-########################################
-#
-print(paste0("working on: dmmvsimssh"))
-
-dmmvsimssh_model_names     = c(config$dmmvsimssh_models)
-dmmvsimssh_benchmark_name  = config$dmmvsimssh_bm
-dmmvsimssh_scores_list = c("es_list", "vs1_list")
-
-
-# loop over groups
-dmmvsimssh_scores = lapply(seq_along(all_groups_info$group_names), function(gn){
-  print(paste0("gn == ", gn))
-  # get group name:
-  file_name  <- paste0(all_groups_info$group_names[gn], "_mout_", all_groups_info$output_dim_standard[gn])
-
-  # loop over the energy and variogram scores
-  dmmvsimssh_scores_tmp = list()
-  for(sc in seq_along(dmmvsimssh_scores_list)){
-    keep_scores = dmmvsimssh_scores_list[sc] #"es_list"
-
-    # load the actual data and get the data.frame, and filter:
-    data_env <- load_and_prepare_data(file_name, dmmvsimssh_benchmark_name)
-    df <- data_env$df
-    dfplot <- filter_models(df, dmmvsimssh_model_names, keep_scores)$df %>% subset(score %in% keep_scores)
-    # rearrange for plotting
-    dfplot <- dfplot %>%
-      pivot_longer(cols = starts_with("bootstrap_"), names_to = "bootstrap", values_to = "value") %>%
-      # recode some things for the plotting
-      mutate(group_name = file_name,
-             group_names_pretty = all_groups_info$group_names_pretty[gn],
-             score = ifelse(dmmvsimssh_scores_list[sc] == "es_list", "Energy Score", "Variogram Score"))
-    # get prettier names for the models
-    new_model_tmp = unlist(lapply(as.character(dfplot$model), change_names))
-    dfplot$model = new_model_tmp
-    # get prettier names for the bm
-    new_bm_tmp = unlist(lapply(as.character(dfplot$benchmark), change_names))
-    dfplot$benchmark = new_bm_tmp
-
-    # save for this score
-    dmmvsimssh_scores_tmp[[sc]] = dfplot
-
-  }
-    return(bind_rows(dmmvsimssh_scores_tmp) )
-}) %>% bind_rows()
-
-
-# get prettier group names for the plot
-dmmvsimssh_scores$group_names_pretty = factor(gsub("_mout_[0-9][0-9]", "", dmmvsimssh_scores$group_names_pretty), levels = all_groups_info$group_names_pretty)
-
-
-pdf(file = paste0(config$cobase_dir, config$results_folder, "Figures/flos_dmesvs_simssh", file_suffix, ".pdf"), width = 12, height = 6)
-print(
-ggplot(dmmvsimssh_scores, aes(group_names_pretty, value)) +
-  facet_wrap(~score, ncol = 2) +
-  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = qnorm(alpha), ymax = qnorm(1 - alpha)),
-            fill = "gray75", color = "gray75", alpha = alpha) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.6, width = 0.7) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray25") +
-  theme_bw() +
-  xlab("Data group") + ylab("DM test statistic") +
-  ggtitle(label = paste0("SimSSh v ", "SimSSh-R")) +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 12),
-        axis.text.y = element_text(size = 12),
-        text=element_text(size=16),
-        plot.margin = margin(t = 10, r = 33, b = 10, l = 45))
-)
-dev.off()
-
-
+tab_path <- function(name, suffix) {
+    paste0(config$cobase_dir, config$results_folder,
+           "Figures/", name, suffix, ".tex")
+}
 
 
 ########################################
-########## dmesvs_mvpp (Figure 3):
+# Main: produce all figures + tables for one dataset.
 ########################################
-#
-print(paste0("working on: dmesvs_mvpp"))
+create_all_results <- function(dataset_name, station_info, group_info) {
+    suf   <- paste0("_", dataset_name)
+    alpha <- 0.25
 
-dmesvs_mvpp_model_names     = c(config$dmesvs_mvpp_models)
-dmesvs_mvpp_benchmark_name  = config$dmesvs_mvpp_bm[2]
-dmesvs_mvpp_scores_list = c("es_list", "vs1_list")
+    ########################################
+    # Figure 1 - dmcrps_t2m: CRPS by station, EMOS-Q vs EMOS-R
+    ########################################
+    print("working on: dmcrps_t2m")
+    dmcrps_scores <- lapply(seq_along(group_info$group_names), function(gn) {
+        file_name <- paste0(group_info$group_names[gn], "_mout_",
+                            group_info$output_dim_standard[gn])
+        res <- new.env(); load_score_env(file_name, res)
 
-# loop over groups
-dmesvs_mvpp_scores = lapply(seq_along(all_groups_info$group_names), function(gn){
-  print(paste0("gn == ", gn))
-  # get group name:
-  file_name  <- paste0(all_groups_info$group_names[gn], "_mout_", all_groups_info$output_dim_standard[gn])
+        crps_scores <- paste0("crps_", as.vector(outer(
+            res$observation_columns, res$stations, paste, sep = "-")))
 
-  # loop over the energy and variogram scores
-  dmesvs_mvpp_scores_tmp = list()
-  for(sc in seq_along(dmesvs_mvpp_scores_list)){
-    keep_scores = dmesvs_mvpp_scores_list[sc]
+        data_env <- load_and_prepare_data(file_name, config$dmcrps_bm)
+        filter_models(data_env$df, config$dmcrps_models, crps_scores)$df %>%
+            subset(score %in% crps_scores) %>%
+            pivot_longer(cols = starts_with("bootstrap_"),
+                         names_to = "bootstrap", values_to = "value") %>%
+            mutate(station = gsub("crps_", "", score), score = "crps") %>%
+            separate(station, into = c("var", "station"), sep = "-") %>%
+            mutate(var = ifelse(var %in% c("obs", "T_DRYB_10"), "T2m", "DPT"),
+                   group = group_info$group_names[gn])
+    }) %>% bind_rows() %>%
+        left_join(station_info, by = c("station" = "st_num")) %>%
+        mutate(st_name = factor(st_name, levels = station_info$st_name))
 
-    # load the actual data and get the data.frame, and filter:
-    data_env <- load_and_prepare_data(file_name, dmesvs_mvpp_benchmark_name)
-    df <- data_env$df
-    dfplot <- filter_models(df, dmesvs_mvpp_model_names, keep_scores)$df %>% subset(score %in% keep_scores)
-    # rearrange for plotting
-    dfplot <- dfplot %>%
-      pivot_longer(cols = starts_with("bootstrap_"), names_to = "bootstrap", values_to = "value") %>%
-      # recode some things for the plotting
-      mutate(group_name = file_name,
-             group_names_pretty = all_groups_info$group_names_pretty[gn],
-             score = ifelse(dmmvsimssh_scores_list[sc] == "es_list", "Energy Score", "Variogram Score"))
-    # get prettier names for the models
-    new_model_tmp = unlist(lapply(as.character(dfplot$model), change_names))
-    dfplot$model = new_model_tmp
-    # get prettier names for the bm
-    new_bm_tmp = unlist(lapply(as.character(dfplot$benchmark), change_names))
-    dfplot$benchmark = new_bm_tmp
-
-    # save for this score
-    dmesvs_mvpp_scores_tmp[[sc]] = dfplot
-
-  }
-  return(bind_rows(dmesvs_mvpp_scores_tmp))
-
-
-}) %>% bind_rows()
-
-# get prettier group names for the plot
-dmesvs_mvpp_scores$group_names_pretty = factor(gsub("_mout_[0-9][0-9]", "", dmesvs_mvpp_scores$group_names_pretty), levels = all_groups_info$group_names_pretty)
-# get prettier model names for the plot
-dmesvs_mvpp_scores$model = factor(dmesvs_mvpp_scores$model, levels = c("SSh", "SimSSh", "ECC", "GCA"))
-
-pdf(file = paste0(config$cobase_dir, config$results_folder, "Figures/flos_dmesvs_mvpp", file_suffix, ".pdf"), width = 12, height = 8)
-print(
-ggplot(dmesvs_mvpp_scores, aes(model, value)) +
-  facet_wrap(~score+group_names_pretty, nrow = 2) +
-  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = qnorm(alpha), ymax = qnorm(1 - alpha)),
-            fill = "gray75", color = "gray75", alpha = alpha) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.6, width = 0.7) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray25") +
-  theme_bw() +
-  xlab("Reshuffling method") + ylab("DM test statistic") +
-  ggtitle(label = paste0("MVPP method v ", "COBASE-GCA")) +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 12),
-        axis.text.y = element_text(size = 12),
-        text=element_text(size=16),
-        plot.margin = margin(t = 10, r = 33, b = 10, l = 45))
-)
-dev.off()
+    n_st <- length(unique(dmcrps_scores$st_name))
+    pdf(file = fig_path("flos_dmcrps_t2m", suf), width = 12, height = 10)
+    print(
+        ggplot(dmcrps_scores, aes(st_name, value)) +
+            facet_wrap(~var, nrow = 2) +
+            geom_rect(aes(xmin = -Inf, xmax = Inf,
+                          ymin = qnorm(alpha), ymax = qnorm(1 - alpha)),
+                      fill = "gray75", color = "gray75", alpha = alpha) +
+            geom_boxplot(outlier.shape = NA, alpha = 0.6, width = 0.7) +
+            geom_hline(yintercept = 0, linetype = "dashed",
+                       color = "gray10", linewidth = 0.8) +
+            theme_bw() +
+            xlab("Station") + ylab("DM test statistic") +
+            ggtitle("CRPS: EMOS v EMOS-R") +
+            theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 12),
+                  axis.text.y = element_text(size = 12),
+                  text        = element_text(size = 16),
+                  plot.margin = margin(t = 10, r = 33, b = 10, l = 45)) +
+            (if (n_st > 1) geom_vline(xintercept = seq(1.5, n_st - 0.5, by = 1),
+                                      col = "grey50", lty = "dashed",
+                                      linewidth = 0.5))
+    )
+    dev.off()
 
 
+    ########################################
+    # Figure 2 - dmmvsimssh: SimSSh v SimSSh-R
+    ########################################
+    print("working on: dmmvsimssh")
+    save_dm_boxplot(
+        prepare_dm_score_df(group_info, config$dmmvsimssh_bm,
+                            config$dmmvsimssh_models),
+        save_path     = fig_path("flos_dmesvs_simssh", suf),
+        xlab          = "Data group",
+        title         = "SimSSh v SimSSh-R",
+        x_aes         = "group_names_pretty",
+        facet_formula = ~score,
+        facet_nrow    = NULL,
+        facet_ncol    = 2,
+        height        = 6
+    )
 
-########################################
-########## dmesvs_parcop (Figure 4):
-########################################
-#
-print(paste0("working on: dmesvs_parcop"))
 
-dmesvs_parcop_model_names     = c(config$dmesvs_parcop_models)
-dmesvs_parcop_benchmark_name  = config$dmesvs_parcop_bm
-dmesvs_parcop_scores_list = c("es_list", "vs1_list")
+    ########################################
+    # Figure 3 - dmesvs_mvpp: MVPP method v COBASE-GCA
+    ########################################
+    print("working on: dmesvs_mvpp")
+    save_dm_boxplot(
+        prepare_dm_score_df(group_info, config$dmesvs_mvpp_bm[2],
+                            config$dmesvs_mvpp_models),
+        save_path    = fig_path("flos_dmesvs_mvpp", suf),
+        xlab         = "Reshuffling method",
+        title        = "MVPP method v COBASE-GCA",
+        vline_breaks = c(1.5, 2.5, 3.5),
+        model_levels = c("SSh", "SimSSh", "ECC", "GCA")
+    )
 
 
-# loop over groups
-dmesvs_parcop_scores = lapply(seq_along(all_groups_info$group_names), function(gn){
-  print(paste0("gn == ", gn))
-  # get group name:
-  file_name  <- paste0(all_groups_info$group_names[gn], "_mout_", all_groups_info$output_dim_standard[gn])
+    ########################################
+    # Figure 4 - dmesvs_parcop: COBASE-* v unshuffled (paired benchmark)
+    ########################################
+    print("working on: dmesvs_parcop")
+    save_dm_boxplot(
+        prepare_dm_score_df(group_info, config$dmesvs_parcop_bm,
+                            config$dmesvs_parcop_models),
+        save_path    = fig_path("flos_dmesvs_parcop", suf),
+        xlab         = "Parametric copula method",
+        title        = "COBASE-model v model",
+        vline_breaks = c(1.5, 2.5, 3.5),
+        model_levels = pretty_models(config$dmesvs_parcop_models)
+    )
 
-  # loop over the energy and variogram scores
-  dmesvs_parcop_scores_tmp = list()
-  for(sc in seq_along(dmesvs_parcop_scores_list)){
-    keep_scores = dmesvs_parcop_scores_list[sc]
 
-    # each model has it's own bm, so just loop over the bms
-    df2_bb = list()
-    for(bb in seq_along(dmesvs_parcop_benchmark_name)){
-      # load the actual data and get the data.frame, and filter to keep models that use this bm:
-      data_env <- load_and_prepare_data(file_name, dmesvs_parcop_benchmark_name[bb])
-      df = data_env$df
-      # now filter to keep only the model we need and the score we want:
-      df2_bb[[bb]] <- filter_models(df, dmesvs_parcop_model_names[bb], keep_scores)$df
+    ########################################
+    # Figure 5 - dmesvs_enscop: COBASE-Ens* v unshuffled (paired benchmark)
+    ########################################
+    print("working on: dmesvs_enscop")
+    save_dm_boxplot(
+        prepare_dm_score_df(group_info, config$dmesvs_enscop_bm,
+                            config$dmesvs_enscop_models),
+        save_path    = fig_path("flos_dmesvs_enscop", suf),
+        xlab         = "Ensemble copula method",
+        title        = "COBASE-model v model (ensemble-based)",
+        vline_breaks = c(1.5, 2.5, 3.5),
+        model_levels = pretty_models(config$dmesvs_enscop_models)
+    )
+
+
+    ########################################
+    # Figure 6 - dmesvs_ensvshist: ensemble-based v history-based COBASE
+    ########################################
+    print("working on: dmesvs_ensvshist")
+    save_dm_boxplot(
+        prepare_dm_score_df(group_info, config$dmesvs_ensvshist_bm,
+                            config$dmesvs_ensvshist_models),
+        save_path    = fig_path("flos_dmesvs_ensvshist", suf),
+        xlab         = "Ensemble-based COBASE method",
+        title        = "COBASE-Ens v COBASE (history-based)",
+        vline_breaks = c(1.5, 2.5, 3.5),
+        model_levels = pretty_models(config$dmesvs_ensvshist_models)
+    )
+
+
+    ########################################
+    # Figure 7 - dmesvs_ecc: methods v ECC
+    ########################################
+    if (!is.null(config$dmesvs_ecc_bm)) {
+        print("working on: dmesvs_ecc")
+        save_dm_boxplot(
+            prepare_dm_score_df(group_info, config$dmesvs_ecc_bm,
+                                config$dmesvs_ecc_models),
+            save_path    = fig_path("flos_dmesvs_ecc", suf),
+            xlab         = "Method",
+            title        = "Methods vs ECC",
+            vline_breaks = c(2.5, 3.5, 4.5, 5.5, 6.5),
+            model_levels = pretty_models(config$dmesvs_ecc_models)
+        )
     }
-    df2 = bind_rows(df2_bb)
-    # rearrange for plotting
-    dfplot <- subset(df2, score %in% keep_scores)
-    dfplot <- dfplot %>%
-      pivot_longer(cols = starts_with("bootstrap_"), names_to = "bootstrap", values_to = "value") %>%
-      # recode some things for the plotting
-      mutate(group_name = file_name,
-             group_names_pretty = all_groups_info$group_names_pretty[gn],
-             score = ifelse(dmesvs_parcop_scores_list[sc] == "es_list", "Energy Score", "Variogram Score"))
-
-    # get prettier names for the models
-    new_model_tmp = unlist(lapply(as.character(dfplot$model), change_names))
-    dfplot$model = new_model_tmp
-    # get prettier names for the bm
-    new_bm_tmp = unlist(lapply(as.character(dfplot$benchmark), change_names))
-    dfplot$benchmark = new_bm_tmp
-
-    # save for this score
-    dmesvs_parcop_scores_tmp[[sc]] = dfplot
-
-  }
-  return(bind_rows(dmesvs_parcop_scores_tmp) )
 
 
-}) %>% bind_rows()
-
-# get prettier group names for the plot
-dmesvs_parcop_scores$group_names_pretty = factor(gsub("_mout_[0-9][0-9]", "", dmesvs_parcop_scores$group_names_pretty), levels = all_groups_info$group_names_pretty)
-# get prettier model names for the plot
-dmesvs_parcop_scores$model = factor(dmesvs_parcop_scores$model, levels = unlist(lapply(dmesvs_parcop_model_names, change_names)))
-
-
-
-pdf(file = paste0(config$cobase_dir, config$results_folder, "Figures/flos_dmesvs_parcop", file_suffix, ".pdf"), width = 12, height = 8)
-print(
-ggplot(dmesvs_parcop_scores, aes(model, value)) +
-  facet_wrap(~score+group_names_pretty, nrow = 2) +
-  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = qnorm(alpha), ymax = qnorm(1 - alpha)),
-            fill = "gray75", color = "gray75", alpha = alpha) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.6, width = 0.7) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray25") +
-  theme_bw() +
-  xlab("Parametric copula method") + ylab("DM test statistic") +
-  ggtitle(label = paste0("COBASE-model v ", "model")) +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 12),
-        axis.text.y = element_text(size = 12),
-        text=element_text(size=16),
-        plot.margin = margin(t = 10, r = 33, b = 10, l = 45)) +
-  geom_vline(xintercept = c(1.5, 2.5, 3.5), col = 'grey75', lty = 'dashed')
-)
-dev.off()
-
-
-
-
-
-########################################
-########## dmesvs_enscop (Figure 5):
-########################################
-#
-print(paste0("working on: dmesvs_enscop"))
-
-dmesvs_enscop_model_names     = c(config$dmesvs_enscop_models)
-dmesvs_enscop_benchmark_name  = config$dmesvs_enscop_bm
-dmesvs_enscop_scores_list = c("es_list", "vs1_list")
-
-
-# loop over groups
-dmesvs_enscop_scores = lapply(seq_along(all_groups_info$group_names), function(gn){
-  print(paste0("gn == ", gn))
-  # get group name:
-  file_name  <- paste0(all_groups_info$group_names[gn], "_mout_", all_groups_info$output_dim_standard[gn])
-
-  # loop over the energy and variogram scores
-  dmesvs_enscop_scores_tmp = list()
-  for(sc in seq_along(dmesvs_enscop_scores_list)){
-    keep_scores = dmesvs_enscop_scores_list[sc]
-
-    # each model has it's own bm, so just loop over the bms
-    df2_bb = list()
-    for(bb in seq_along(dmesvs_enscop_benchmark_name)){
-      # load the actual data and get the data.frame, and filter to keep models that use this bm:
-      data_env <- load_and_prepare_data(file_name, dmesvs_enscop_benchmark_name[bb])
-      df = data_env$df
-      # now filter to keep only the model we need and the score we want:
-      df2_bb[[bb]] <- filter_models(df, dmesvs_enscop_model_names[bb], keep_scores)$df
+    ########################################
+    # Figure 7b - dmesvs_ecc_ens: ensemble-based COBASE v ECC
+    ########################################
+    if (!is.null(config$dmesvs_ecc_ens_bm)) {
+        print("working on: dmesvs_ecc_ens")
+        save_dm_boxplot(
+            prepare_dm_score_df(group_info, config$dmesvs_ecc_ens_bm,
+                                config$dmesvs_ecc_ens_models),
+            save_path    = fig_path("flos_dmesvs_ecc_ens", suf),
+            xlab         = "Method",
+            title        = "Ensemble-based COBASE vs ECC",
+            vline_breaks = c(1.5, 2.5, 3.5),
+            model_levels = pretty_models(config$dmesvs_ecc_ens_models)
+        )
     }
-    df2 = bind_rows(df2_bb)
-    # rearrange for plotting
-    dfplot <- subset(df2, score %in% keep_scores)
-    dfplot <- dfplot %>%
-      pivot_longer(cols = starts_with("bootstrap_"), names_to = "bootstrap", values_to = "value") %>%
-      # recode some things for the plotting
-      mutate(group_name = file_name,
-             group_names_pretty = all_groups_info$group_names_pretty[gn],
-             score = ifelse(dmesvs_enscop_scores_list[sc] == "es_list", "Energy Score", "Variogram Score"))
-
-    # get prettier names for the models
-    new_model_tmp = unlist(lapply(as.character(dfplot$model), change_names))
-    dfplot$model = new_model_tmp
-    # get prettier names for the bm
-    new_bm_tmp = unlist(lapply(as.character(dfplot$benchmark), change_names))
-    dfplot$benchmark = new_bm_tmp
-
-    # save for this score
-    dmesvs_enscop_scores_tmp[[sc]] = dfplot
-
-  }
-  return(bind_rows(dmesvs_enscop_scores_tmp) )
 
 
-}) %>% bind_rows()
-
-# get prettier group names for the plot
-dmesvs_enscop_scores$group_names_pretty = factor(gsub("_mout_[0-9][0-9]", "", dmesvs_enscop_scores$group_names_pretty), levels = all_groups_info$group_names_pretty)
-# get prettier model names for the plot
-dmesvs_enscop_scores$model = factor(dmesvs_enscop_scores$model, levels = unlist(lapply(dmesvs_enscop_model_names, change_names)))
-
-
-
-pdf(file = paste0(config$cobase_dir, config$results_folder, "Figures/flos_dmesvs_enscop", file_suffix, ".pdf"), width = 12, height = 8)
-print(
-ggplot(dmesvs_enscop_scores, aes(model, value)) +
-  facet_wrap(~score+group_names_pretty, nrow = 2) +
-  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = qnorm(alpha), ymax = qnorm(1 - alpha)),
-            fill = "gray75", color = "gray75", alpha = alpha) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.6, width = 0.7) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray25") +
-  theme_bw() +
-  xlab("Ensemble copula method") + ylab("DM test statistic") +
-  ggtitle(label = paste0("COBASE-model v ", "model (ensemble-based)")) +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 12),
-        axis.text.y = element_text(size = 12),
-        text=element_text(size=16),
-        plot.margin = margin(t = 10, r = 33, b = 10, l = 45)) +
-  geom_vline(xintercept = c(1.5, 2.5, 3.5), col = 'grey75', lty = 'dashed')
-)
-dev.off()
-
-
-########################################
-########## dmesvs_ensvshist (Figure 6):
-########################################
-# COBASE-Ens* vs COBASE-* (ensemble-based vs history-based)
-print(paste0("working on: dmesvs_ensvshist"))
-
-dmesvs_ensvshist_model_names     = c(config$dmesvs_ensvshist_models)
-dmesvs_ensvshist_benchmark_name  = config$dmesvs_ensvshist_bm
-dmesvs_ensvshist_scores_list = c("es_list", "vs1_list")
-
-
-# loop over groups
-dmesvs_ensvshist_scores = lapply(seq_along(all_groups_info$group_names), function(gn){
-  print(paste0("gn == ", gn))
-  # get group name:
-  file_name  <- paste0(all_groups_info$group_names[gn], "_mout_", all_groups_info$output_dim_standard[gn])
-
-  # loop over the energy and variogram scores
-  dmesvs_ensvshist_scores_tmp = list()
-  for(sc in seq_along(dmesvs_ensvshist_scores_list)){
-    keep_scores = dmesvs_ensvshist_scores_list[sc]
-
-    # each model has it's own bm, so just loop over the bms
-    df2_bb = list()
-    for(bb in seq_along(dmesvs_ensvshist_benchmark_name)){
-      # load the actual data and get the data.frame, and filter to keep models that use this bm:
-      data_env <- load_and_prepare_data(file_name, dmesvs_ensvshist_benchmark_name[bb])
-      df = data_env$df
-      # now filter to keep only the model we need and the score we want:
-      df2_bb[[bb]] <- filter_models(df, dmesvs_ensvshist_model_names[bb], keep_scores)$df
+    ########################################
+    # Figure 8 - dmesvs_ecc_combined: all methods v ECC
+    ########################################
+    if (!is.null(config$dmesvs_ecc_combined_bm)) {
+        print("working on: dmesvs_ecc_combined")
+        save_dm_boxplot(
+            prepare_dm_score_df(group_info, config$dmesvs_ecc_combined_bm,
+                                config$dmesvs_ecc_combined_models),
+            save_path    = fig_path("flos_dmesvs_ecc_combined", suf),
+            xlab         = "Method",
+            title        = "All methods vs ECC",
+            vline_breaks = c(2.5, 3.5, 7.5),
+            model_levels = pretty_models(config$dmesvs_ecc_combined_models),
+            width        = 16
+        )
     }
-    df2 = bind_rows(df2_bb)
-    # rearrange for plotting
-    dfplot <- subset(df2, score %in% keep_scores)
-    dfplot <- dfplot %>%
-      pivot_longer(cols = starts_with("bootstrap_"), names_to = "bootstrap", values_to = "value") %>%
-      # recode some things for the plotting
-      mutate(group_name = file_name,
-             group_names_pretty = all_groups_info$group_names_pretty[gn],
-             score = ifelse(dmesvs_ensvshist_scores_list[sc] == "es_list", "Energy Score", "Variogram Score"))
-
-    # get prettier names for the models
-    new_model_tmp = unlist(lapply(as.character(dfplot$model), change_names))
-    dfplot$model = new_model_tmp
-    # get prettier names for the bm
-    new_bm_tmp = unlist(lapply(as.character(dfplot$benchmark), change_names))
-    dfplot$benchmark = new_bm_tmp
-
-    # save for this score
-    dmesvs_ensvshist_scores_tmp[[sc]] = dfplot
-
-  }
-  return(bind_rows(dmesvs_ensvshist_scores_tmp) )
-
-}) %>% bind_rows()
-
-# get prettier group names for the plot
-dmesvs_ensvshist_scores$group_names_pretty = factor(gsub("_mout_[0-9][0-9]", "", dmesvs_ensvshist_scores$group_names_pretty), levels = all_groups_info$group_names_pretty)
-# get prettier model names for the plot
-dmesvs_ensvshist_scores$model = factor(dmesvs_ensvshist_scores$model, levels = unlist(lapply(dmesvs_ensvshist_model_names, change_names)))
 
 
+    ########################################
+    # Table B.3 - CRPS by station
+    ########################################
+    crps_models <- c("ens", config$crps_scores_models)
 
-pdf(file = paste0(config$cobase_dir, config$results_folder, "Figures/flos_dmesvs_ensvshist", file_suffix, ".pdf"), width = 12, height = 8)
-print(
-ggplot(dmesvs_ensvshist_scores, aes(model, value)) +
-  facet_wrap(~score+group_names_pretty, nrow = 2) +
-  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = qnorm(alpha), ymax = qnorm(1 - alpha)),
-            fill = "gray75", color = "gray75", alpha = alpha) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.6, width = 0.7) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray25") +
-  theme_bw() +
-  xlab("Ensemble-based COBASE method") + ylab("DM test statistic") +
-  ggtitle(label = paste0("COBASE-Ens v COBASE (history-based)")) +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 12),
-        axis.text.y = element_text(size = 12),
-        text=element_text(size=16),
-        plot.margin = margin(t = 10, r = 33, b = 10, l = 45)) +
-  geom_vline(xintercept = c(1.5, 2.5, 3.5), col = 'grey75', lty = 'dashed')
-)
-dev.off()
+    out_crps <- lapply(seq_along(group_info$group_names), function(gn) {
+        file_name <- paste0(group_info$group_names[gn], "_mout_",
+                            group_info$output_dim_standard[gn])
+        res <- new.env(); load_score_env(file_name, res)
 
-
-
-########################################
-########## dmesvs_ecc (Figure 7):
-########################################
-# Methods vs ECC as benchmark
-if (!is.null(config$dmesvs_ecc_bm)) {
-print(paste0("working on: dmesvs_ecc"))
-
-dmesvs_ecc_model_names     = c(config$dmesvs_ecc_models)
-dmesvs_ecc_benchmark_name  = config$dmesvs_ecc_bm
-dmesvs_ecc_scores_list = c("es_list", "vs1_list")
-
-# loop over groups
-dmesvs_ecc_scores = lapply(seq_along(all_groups_info$group_names), function(gn){
-  print(paste0("gn == ", gn))
-  file_name  <- paste0(all_groups_info$group_names[gn], "_mout_", all_groups_info$output_dim_standard[gn])
-
-  dmesvs_ecc_scores_tmp = list()
-  for(sc in seq_along(dmesvs_ecc_scores_list)){
-    keep_scores = dmesvs_ecc_scores_list[sc]
-
-    data_env <- load_and_prepare_data(file_name, dmesvs_ecc_benchmark_name)
-    df <- data_env$df
-    dfplot <- filter_models(df, dmesvs_ecc_model_names, keep_scores)$df %>% subset(score %in% keep_scores)
-    dfplot <- dfplot %>%
-      pivot_longer(cols = starts_with("bootstrap_"), names_to = "bootstrap", values_to = "value") %>%
-      mutate(group_name = file_name,
-             group_names_pretty = all_groups_info$group_names_pretty[gn],
-             score = ifelse(dmesvs_ecc_scores_list[sc] == "es_list", "Energy Score", "Variogram Score"))
-    new_model_tmp = unlist(lapply(as.character(dfplot$model), change_names))
-    dfplot$model = new_model_tmp
-    new_bm_tmp = unlist(lapply(as.character(dfplot$benchmark), change_names))
-    dfplot$benchmark = new_bm_tmp
-
-    dmesvs_ecc_scores_tmp[[sc]] = dfplot
-  }
-  return(bind_rows(dmesvs_ecc_scores_tmp))
-}) %>% bind_rows()
-
-dmesvs_ecc_scores$group_names_pretty = factor(gsub("_mout_[0-9][0-9]", "", dmesvs_ecc_scores$group_names_pretty), levels = all_groups_info$group_names_pretty)
-dmesvs_ecc_scores$model = factor(dmesvs_ecc_scores$model, levels = unlist(lapply(dmesvs_ecc_model_names, change_names)))
-
-pdf(file = paste0(config$cobase_dir, config$results_folder, "Figures/flos_dmesvs_ecc", file_suffix, ".pdf"), width = 12, height = 8)
-print(
-ggplot(dmesvs_ecc_scores, aes(model, value)) +
-  facet_wrap(~score+group_names_pretty, nrow = 2) +
-  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = qnorm(alpha), ymax = qnorm(1 - alpha)),
-            fill = "gray75", color = "gray75", alpha = alpha) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.6, width = 0.7) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray25") +
-  theme_bw() +
-  xlab("Method") + ylab("DM test statistic") +
-  ggtitle(label = "Methods vs ECC") +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 12),
-        axis.text.y = element_text(size = 12),
-        text=element_text(size=16),
-        plot.margin = margin(t = 10, r = 33, b = 10, l = 45))
-)
-dev.off()
-} # end if dmesvs_ecc_bm
-
-
-########################################
-########################################
-########## crps table (Table B.3):
-########################################
-#
-crps_model_names_list = c("ens", config$crps_scores_models)
-
-
-# loop over groups
-out_crps <- lapply(seq_along(all_groups_info$group_names), function(gn){
-  print(paste0("gn == ", gn))
-  # get group name
-  file_name  <- paste0(all_groups_info$group_names[gn], "_mout_", all_groups_info$output_dim_standard[gn])
-
-
-  # load scores:
-  res <- new.env()
-  load_score_env(file_name, res)
-
-  # keep score data that we want:
-  # loop over the models that we want to keep:
-  out_scores_tmp <- lapply(seq_along(crps_model_names_list), function(mm) {
-    # this is a data.frame with stations in columns and days in rows. take the mean over all days per station
-    tmp = colMeans(res[["crps_list"]][[crps_model_names_list[mm]]])
-    # make a data.frame for the table
-    tmp2 = data.frame(crps = c(tmp),
-                      st_num = names(tmp),
-                      model = crps_model_names_list[mm],
-                      score = "crps_list") %>%
-      separate(st_num, into = c("var", "st_num"), sep = "-")
-       return(tmp2)
-      }) %>% bind_rows()
-
-    # get prettier models for plotting
-    new_model_tmp = unlist(lapply(as.character(out_scores_tmp$model), change_names))
-    out_scores_tmp$model = new_model_tmp
-    return(out_scores_tmp )
-
-}) %>% bind_rows()
-
-
-# this is for making the T2m table
-out_crps_df = out_crps %>%
-  # select "obs" which is T2m from AL, or T_DRYB_10 which is T2m from EC
-  filter(var %in% c("obs", "T_DRYB_10")) %>%
-  # put with the prettier station information
-  merge(., station_info) %>%
-  # rename and select things for the table
-  mutate(Station = st_name) %>%
-  dplyr::select(Station, model, crps)
-
-
-# reformat for the table
-out_crps_df = out_crps_df  %>%
-  # Sonnblick is in there twice. remove one.
-  distinct(Station, model, .keep_all = TRUE) %>%
-  pivot_wider(names_from = model,values_from = crps)
-
-# reorder models for the table
-out_crps_df <- out_crps_df[, c("Station", unlist(lapply(as.character(crps_model_names_list[-1]), change_names)))]
-
-# make an xtable object
-out_crps_df_tab <- xtable(out_crps_df, digits = 4)
-print(out_crps_df_tab, include.rownames = FALSE,
-      file = paste0(config$cobase_dir, config$results_folder, "Figures/crps_table", file_suffix, ".tex"))
-
-
-########################################
-########## esvs table (Table B4):
-########################################
-#
-# get a list of model names
-esvs_model_names_list = c("ens", config$mvpp_scores_models)
-# pretty model names in the specific order that we want:
-esvs_model_names_list_order = c("SimSSh-R", "SimSSh", "SSh", "ECC", "GCA", "Clayton", "Frank", "Gumbel", "COBASE-GCA", "COBASE-Clayton", "COBASE-Frank", "COBASE-Gumbel", "EnsGCA", "EnsClayton", "EnsFrank", "EnsGumbel", "COBASE-EnsGCA", "COBASE-EnsClayton", "COBASE-EnsFrank", "COBASE-EnsGumbel" )
-mvscores_list = c("es_list", "vs1_list")
-
-
-# loop over groups:
-out_esvs <- lapply(seq_along(all_groups_info$group_names), function(gn){
-  print(paste0("gn == ", gn))
-  # get group name:
-  file_name  <- paste0(all_groups_info$group_names[gn], "_mout_", all_groups_info$output_dim_standard[gn])
-
-
-  # load scores:
-  res <- new.env()
-  load_score_env(file_name, res)
-
-  # loop over the models that we want to keep:
-  out_scores_tmp <- lapply(seq_along(esvs_model_names_list), function(mm) {
-    # loop over the scores:
-    lapply(mvscores_list, function(s){
-      # each item is a list of the score for each group. take a mean of it
-      tmp = mean(res[[s]][[esvs_model_names_list[mm]]])
-      # make a data.frame for the table
-      tmp2 = data.frame(value = c(tmp),
-                        group = all_groups_info$group_names[gn],
-                        group_pretty = all_groups_info$group_names_pretty[gn],
-                        model = esvs_model_names_list[mm],
-                        score = ifelse(s == "es_list", "Energy Score", "Variogram Score"))
-      return(tmp2)
+        lapply(crps_models, function(m) {
+            tmp <- colMeans(res[["crps_list"]][[m]])
+            data.frame(crps = tmp, st_num = names(tmp), model = m,
+                       score = "crps_list") %>%
+                separate(st_num, into = c("var", "st_num"), sep = "-")
+        }) %>% bind_rows() %>%
+            mutate(model = pretty_models(model))
     }) %>% bind_rows()
 
-  }) %>% bind_rows()
+    out_crps_df <- out_crps %>%
+        filter(var %in% c("obs", "T_DRYB_10")) %>%
+        merge(., station_info) %>%
+        mutate(Station = st_name) %>%
+        dplyr::select(Station, model, crps) %>%
+        distinct(Station, model, .keep_all = TRUE) %>%
+        pivot_wider(names_from = model, values_from = crps)
 
-  # get prettier models for plotting
-  new_model_tmp = unlist(lapply(as.character(out_scores_tmp$model), change_names))
-  out_scores_tmp$model = new_model_tmp
-  return(out_scores_tmp )
-
-}) %>% bind_rows() %>% unique()
+    out_crps_df <- out_crps_df[, c("Station", pretty_models(crps_models[-1]))]
+    print(xtable(out_crps_df, digits = 4),
+          include.rownames = FALSE, file = tab_path("crps_table", suf))
 
 
+    ########################################
+    # Table B.4 - ES/VS summary
+    ########################################
+    esvs_models <- c("ens", config$mvpp_scores_models)
+    score_kinds <- c("es_list", "vs1_list")
 
-# reformt for the table:
-out_esvs_formatted <- out_esvs %>%
-  # rename scores:
-  mutate(score_abbrev = ifelse(score == "Energy Score", "ESS", "VSS")) %>%
-  # get prettier group names
-  mutate(group_score = paste(group_pretty, score_abbrev, sep = "_")) %>%
-  # remove variables we don't need in the table
-  dplyr::select(-score, -score_abbrev, -group, -group_pretty) %>%
-  pivot_wider(names_from = group_score, values_from = value)
+    out_esvs <- lapply(seq_along(group_info$group_names), function(gn) {
+        file_name <- paste0(group_info$group_names[gn], "_mout_",
+                            group_info$output_dim_standard[gn])
+        res <- new.env(); load_score_env(file_name, res)
 
-# make into an xtable object
-out_esvs_formatted_tab <- xtable(out_esvs_formatted, digits=4)
-## save the scores:
-print(out_esvs_formatted_tab, include.rownames = FALSE,
-      file = paste0(config$cobase_dir, config$results_folder, "Figures/esvs_table", file_suffix, ".tex"))
+        lapply(esvs_models, function(m) {
+            lapply(score_kinds, function(s) {
+                data.frame(value        = mean(res[[s]][[m]]),
+                           group        = group_info$group_names[gn],
+                           group_pretty = group_info$group_names_pretty[gn],
+                           model        = m,
+                           score        = ifelse(s == "es_list",
+                                                 "Energy Score",
+                                                 "Variogram Score"))
+            }) %>% bind_rows()
+        }) %>% bind_rows() %>%
+            mutate(model = pretty_models(model))
+    }) %>% bind_rows() %>% unique()
 
-} # end of create_all_results
+    out_esvs_formatted <- out_esvs %>%
+        mutate(score_abbrev = ifelse(score == "Energy Score", "ESS", "VSS"),
+               group_score  = paste(group_pretty, score_abbrev, sep = "_")) %>%
+        dplyr::select(-score, -score_abbrev, -group, -group_pretty) %>%
+        pivot_wider(names_from = group_score, values_from = value)
+
+    print(xtable(out_esvs_formatted, digits = 4),
+          include.rownames = FALSE, file = tab_path("esvs_table", suf))
+}
 
 
 ########################################
-# Run for Mock data (synthetic)
+# Run for both datasets.
 ########################################
-mock_station_info = data.frame(st_num = c("1", "2", "3"),
-                               st_name = c("St1", "St2", "St3"),
-                               group = c("Mock_data","Mock_data", "Mock_data"),
-                               lat = c(NA, NA, NA),
-                               lon = c(NA, NA, NA))
 
-mock_groups_info = data.frame(group_names = "Mock_data",
-                              group_names_pretty = "Mock Data",
-                              output_dim_standard = 10)
-
+# Mock data (synthetic)
+mock_station_info <- data.frame(
+    st_num  = c("1", "2", "3"),
+    st_name = c("St1", "St2", "St3"),
+    group   = "Mock_data",
+    lat     = NA, lon = NA
+)
+mock_groups_info <- data.frame(
+    group_names         = "Mock_data",
+    group_names_pretty  = "Mock Data",
+    output_dim_standard = 10
+)
 create_all_results("Mock_data", mock_station_info, mock_groups_info)
 
 
-########################################
-# Run for KNMI data (real)
-########################################
-knmi_station_info = data.frame(st_num = c("235", "240", "260", "280", "310", "380"),
-                               st_name = c("De Kooy", "Schiphol", "De Bilt", "Leeuwarden", "Vlissingen", "Maastricht"),
-                               group = rep("KNMI", 6),
-                               lat = c(52.93, 52.30, 52.10, 53.22, 51.44, 50.91),
-                               lon = c(4.78, 4.77, 5.18, 5.75, 3.60, 5.77))
-
-knmi_groups_info = data.frame(group_names = "KNMI",
-                              group_names_pretty = "KNMI",
-                              output_dim_standard = 51)
-
+# KNMI data (real)
+knmi_station_info <- data.frame(
+    st_num  = c("235", "240", "260", "280", "310", "380"),
+    st_name = c("De Kooy", "Schiphol", "De Bilt",
+                "Leeuwarden", "Vlissingen", "Maastricht"),
+    group   = "KNMI",
+    lat     = c(52.93, 52.30, 52.10, 53.22, 51.44, 50.91),
+    lon     = c(4.78, 4.77, 5.18, 5.75, 3.60, 5.77)
+)
+knmi_groups_info <- data.frame(
+    group_names         = "KNMI",
+    group_names_pretty  = "KNMI",
+    output_dim_standard = 51
+)
 create_all_results("KNMI", knmi_station_info, knmi_groups_info)

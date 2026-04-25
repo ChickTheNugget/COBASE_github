@@ -1,4 +1,8 @@
 .Rproj.user
 .Rhistory
-.RData
 .Ruserdata
+
+# R serialised data — kept out of the repo (often large, regenerable via main.r)
+*.RData
+*.Rdata
+*.rdata

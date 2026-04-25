@@ -28,9 +28,11 @@ source(paste0(config$cobase_dir, "/Postprocessing/multivariate.R"))
 
 
 # 3. creating plots:
-# calling create_plots_paper.R does the following:
+# calling create_plots_paper_selection.R does the following:
 # - defines a function "create_all_results"
-# - "create_all_results" calls the function "create_dm_plots_single_benchmark" from dm_plots.R
+# - "create_all_results" calls prepare_dm_score_df + save_dm_boxplot from dm_plots.R
+#   to build each DM-statistic figure, plus the CRPS and ES/VS tables
+# - runs create_all_results for both Mock_data and KNMI
 source(paste0(config$cobase_dir, "/Creating Plots/create_plots_paper_selection.R"))
 
 
