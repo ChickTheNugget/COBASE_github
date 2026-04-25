@@ -313,7 +313,7 @@ mvpp_latent_obs <- function(n, m, d, obs_init, obs, postproc_out_init, postproc_
 
     mvppout <- array(NA, dim = c(n, output_dim, d))
     chosenCopula <- array(NA, dim = n)
-    params <- array(NA, dim = n)
+    params <- vector("list", n)
 
     # concatenate obs_init and obs arrays to determine covariance matrix for Gaussian copulas
     obs_all <- rbind(obs_init, obs)
@@ -364,7 +364,7 @@ mvpp_latent_obs <- function(n, m, d, obs_init, obs, postproc_out_init, postproc_
 
         mvppout[nn, , ] <- out$mvppout
         if (!is.null(out$chosenCopula)) chosenCopula[nn] <- out$chosenCopula
-        if (!is.null(out$params)) params[nn] <- out$params
+        if (!is.null(out$params)) params[[nn]] <- out$params
     }
 
     return(list("mvppout" = mvppout, "chosenCopula" = chosenCopula, "params" = params))
@@ -374,7 +374,7 @@ mvpp_latent_ens <- function(n, m, d, ensfc, postproc_out, function_on_latent_ens
 
     mvppout <- array(NA, dim = c(n, output_dim, d))
     chosenCopula <- array(NA, dim = n)
-    params <- array(NA, dim = n)
+    params <- vector("list", n)
 
     set.seed(2025)
     pct_step <- max(1, floor(n / 20))
@@ -409,7 +409,7 @@ mvpp_latent_ens <- function(n, m, d, ensfc, postproc_out, function_on_latent_ens
 
         mvppout[nn, , ] <- out$mvppout
         if (!is.null(out$chosenCopula)) chosenCopula[nn] <- out$chosenCopula
-        if (!is.null(out$params)) params[nn] <- out$params
+        if (!is.null(out$params)) params[[nn]] <- out$params
     }
 
     return(list("mvppout" = mvppout, "chosenCopula" = chosenCopula, "params" = params))
@@ -474,8 +474,10 @@ mvpp_cop_gca <- function(n, m, d, obs_init, obs, postproc_out_init, postproc_out
 
         if (!(class(fitcop) == "indepCopula")) {
             cop <- fitcop@copula
+            params <- fitcop@estimate
         } else {
             cop <- fitcop
+            params <- NULL
         }
 
 
@@ -502,13 +504,13 @@ mvpp_cop_gca <- function(n, m, d, obs_init, obs, postproc_out_init, postproc_out
         return(list(
             mvppout = mvsample,
             chosenCopula = NULL,
-            params = NULL
+            params = params
         ))
     }
 
     res <- mvpp_latent_obs(n, m, d, obs_init, obs, postproc_out_init, postproc_out, function_on_latent_obs, trainingWindow, output_dim, sim_matrix)
 
-    return(list("mvppout" = res$mvppout))
+    return(res)
 }
 
 mvpp_arch <- function(method, n, m, d, obs_init, obs, postproc_out_init, postproc_out, EMOS_sample, trainingWindow, output_dim, sim_matrix = NULL) {
@@ -601,8 +603,10 @@ mvpp_ens_cop_gca <- function(n, m, d, ensfc, postproc_out, EMOS_sample, output_d
 
         if (!(class(fitcop) == "indepCopula")) {
             cop <- fitcop@copula
+            params <- fitcop@estimate
         } else {
             cop <- fitcop
+            params <- NULL
         }
 
         paramMargins <- list()
@@ -625,12 +629,12 @@ mvpp_ens_cop_gca <- function(n, m, d, ensfc, postproc_out, EMOS_sample, output_d
         return(list(
             mvppout = mvsample,
             chosenCopula = NULL,
-            params = NULL
+            params = params
         ))
     }
 
     res <- mvpp_latent_ens(n, m, d, ensfc, postproc_out, function_on_latent_ens, output_dim)
-    return(list("mvppout" = res$mvppout))
+    return(res)
 }
 
 mvpp_ens_arch <- function(method, n, m, d, ensfc, postproc_out, EMOS_sample, output_dim) {

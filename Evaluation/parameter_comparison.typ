@@ -123,8 +123,101 @@ Just like we used Kendall's tau to estimate the Copulas we can use the parameter
 
 == Conclusion
 
-The two methods do not give the same $theta$. 
+The two methods do not give the same $theta$.
 
 1. *They rarely agree on the same day.* On Mock_data the paired estimates are basically uncorrelated; on KNMI there is a small positive correlation ($r approx 0.17$). One estimate tells you very little about the other.
 2. *Ens-based always gives a larger $theta$.* In every family on every dataset, ens-based estimates more dependence than obs-based. The gap on Kendall's $tau$ ranges from about $+0.03$ (Mock Gumbel) to $+0.14$ (KNMI Clayton/Gumbel).
 3. *Ens-based is much noisier.* Wider boxplots, more outliers, and more failed fits — especially when the ensemble is small.
+
+#pagebreak()
+
+= Gaussian Copula
+
+The Gaussian copula has no single $theta$. In dimension $d$ each fit returns a $d times d$ correlation matrix $R$, i.e. $d(d-1)\/2$ unique correlations $rho$. We pool every (day, pair) entry and reuse the same four analyses with $rho$ in place of $theta$. Kendall's $tau$ follows from $tau = (2\/pi) dot arcsin(rho)$.
+
+== 5. Scatter plot: $rho_("ens")$ vs $rho_("obs")$
+
+#figure(
+  image("../Results/Figures/ParamComparison/gaussian_scatter_Mock_data.pdf", width: 60%),
+  caption: [Gaussian scatter on Mock_data.]
+) <fig-gauss-scatter-mock>
+
+#figure(
+  image("../Results/Figures/ParamComparison/gaussian_scatter_KNMI.pdf", width: 60%),
+  caption: [Gaussian scatter on KNMI.]
+) <fig-gauss-scatter-knmi>
+
+- Mock_data: $r approx 0.04$ $arrow.r$ essentially uncorrelated.
+- KNMI: $r approx 0.20$ $arrow.r$ weak positive alignment, like the Archimedean case.
+
+== 6. Bland-Altman plot
+
+#figure(
+  image("../Results/Figures/ParamComparison/gaussian_blandaltman_Mock_data.pdf", width: 60%),
+  caption: [Gaussian Bland-Altman on Mock_data.]
+) <fig-gauss-ba-mock>
+
+#figure(
+  image("../Results/Figures/ParamComparison/gaussian_blandaltman_KNMI.pdf", width: 60%),
+  caption: [Gaussian Bland-Altman on KNMI.]
+) <fig-gauss-ba-knmi>
+
+- Mock_data: bias $approx -0.10$ $arrow.r$ ens slightly underestimates $rho$, opposite to the Archimedean pattern.
+- KNMI: bias $approx +0.18$ $arrow.r$ ens overestimates, same direction as Archimedean.
+- 95% bands are wide ($plus.minus 0.7$–$0.9$).
+
+== 7. Distribution of $rho$ over (days, pairs)
+
+#figure(
+  image("../Results/Figures/ParamComparison/gaussian_distribution_Mock_data.pdf", width: 45%),
+  caption: [Pooled $rho$ distribution on Mock_data.]
+) <fig-gauss-dist-mock>
+
+#figure(
+  image("../Results/Figures/ParamComparison/gaussian_distribution_KNMI.pdf", width: 45%),
+  caption: [Pooled $rho$ distribution on KNMI.]
+) <fig-gauss-dist-knmi>
+
+- Ens-based pool is wider than obs-based, like the Archimedean case.
+- KNMI ens median sits higher; Mock's slightly lower.
+
+== 8. Per-day Frobenius distance and summary
+
+#figure(
+  image("../Results/Figures/ParamComparison/gaussian_frobenius_Mock_data.pdf", width: 75%),
+  caption: [Per-day $norm(R_("obs") - R_("ens"))_F$ on Mock_data.]
+) <fig-gauss-frob-mock>
+
+#figure(
+  image("../Results/Figures/ParamComparison/gaussian_frobenius_KNMI.pdf", width: 75%),
+  caption: [Per-day $norm(R_("obs") - R_("ens"))_F$ on KNMI.]
+) <fig-gauss-frob-knmi>
+
+#figure(
+  table(
+    columns: 7,
+    align: (left, right, right, right, right, right, right),
+    stroke: none,
+    table.hline(),
+    table.header(
+      [*Dataset*], [*n*],
+      [*mean $rho_("obs")$*], [*mean $rho_("ens")$*],
+      [*mean $tau_("obs")$*], [*mean $tau_("ens")$*],
+      [*mean $norm(.)_F$*]
+    ),
+    table.hline(),
+    [Mock_data], [720],   [0.165], [0.068], [0.107], [0.046], [0.942],
+    [KNMI],      [89100], [0.108], [0.292], [0.072], [0.201], [4.635],
+    table.hline(),
+  ),
+  caption: [Gaussian summary statistics.]
+) <tab-gauss-summary>
+
+- Mock_data mean $norm(.)_F approx 0.94$ on a $3 times 3$ matrix; KNMI $approx 4.63$ on a $12 times 12$ matrix — both large.
+- KNMI $tau$ gap $approx +0.13$, matching the Archimedean families on KNMI.
+
+== Conclusion (Gaussian)
+
+1. *Daily agreement is weak*, just like Archimedean ($r approx 0.04$ Mock, $approx 0.20$ KNMI).
+2. *Bias direction depends on the dataset.* KNMI: ens overestimates ($+0.18$); Mock: ens slightly underestimates ($-0.10$).
+3. *The matrices differ substantially* — large Frobenius distances on both datasets, and ens-based per-pair spread is $1.2$–$2 times$ the obs-based spread.

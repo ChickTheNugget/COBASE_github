@@ -1,0 +1,2 @@
+"n_days","n_pairs_per_day","mean_rho_obs","mean_rho_ens","sd_rho_obs","sd_rho_ens","mean_tau_obs","mean_tau_ens","mean_diff_rho","mean_abs_diff_rho","mean_frob_distance"
+1350,66,0.107603261517778,0.291942996114964,0.272339995000812,0.315823027230166,0.0716584045350342,0.201455000243588,0.184339734597186,0.33503609460113,4.63453356856633
